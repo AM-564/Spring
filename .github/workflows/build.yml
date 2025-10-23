@@ -1,0 +1,105 @@
+name: CI/CD Pipeline
+
+on:
+    workflow_dispatch:
+    push:
+        branches:
+            - main
+    pull_request:
+        types: [opened, synchronize, reopened]
+
+
+jobs:
+    tests:
+        name: Unit tests
+        runs-on: ubuntu-latest
+
+        steps:
+          - uses: actions/checkout@v1
+
+          - name: Set up JDK
+            uses: actions/setup-java@v3
+            with:
+                java-version: '17'
+                distribution: 'temurin'
+
+          - name: Cache Maven packages
+            uses: actions/cache@v3
+            with:
+                path: ~/.m2
+                key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+                restore-keys: ${{ runner.os }}-m2
+
+          - name: Run Tests
+            run: mvn -B test
+
+    sonar:
+        name: Build and analyze
+        needs: tests
+        runs-on: ubuntu-latest
+
+        steps:
+          - uses: actions/checkout@v4
+            with:
+                fetch-depth: 0
+
+          - name: Set up JDK 17
+            uses: actions/setup-java@v4
+            with:
+                java-version: 17
+                distribution: 'temurin'
+
+          - name: Cache SonarQube packages
+            uses: actions/cache@v4
+            with:
+                path: ~/.sonar/cache
+                key: ${{ runner.os }}-sonar
+                restore-keys: ${{ runner.os }}-sonar
+
+          - name: Cache Maven packages
+            uses: actions/cache@v4
+            with:
+                path: ~/.m2
+                key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+                restore-keys: ${{ runner.os }}-m2
+
+          - name: Build and analyze
+            env:
+                SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+            run: mvn -B verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar -Dsonar.projectKey=AM-564_Spring
+        
+    build:
+        needs: sonar
+        name: Build
+        runs-on: ubuntu-latest
+        
+        steps:
+          - uses: actions/checkout@v1
+          - name: Set up JDK
+            uses: actions/setup-java@v1
+            with:
+                java-version: '17'
+          - name: Cache Maven packages
+            uses: actions/cache@v3
+            with:
+                path: ~/.m2
+                key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+                restore-keys: ${{ runner.os }}-m2
+          - name: Build with Maven
+            run: mvn clean package
+          
+          - name: Upload JAR
+            uses: actions/upload-artifact@v4
+            with:
+                name: artifact
+                path: target/AM.jar
+          
+          - name: Build & push Docker image
+            uses: mr-smithers-excellent/docker-build-push@v6
+            with:
+                image: alejandromora564/petmanager
+                tags: latest
+                registry: docker.io
+                dockerfile: Dockerfile
+                username: ${{ secrets.DOCKER_USERNAME }}
+                password: ${{ secrets.DOKCER_PASSWORD }}
